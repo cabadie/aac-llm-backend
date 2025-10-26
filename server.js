@@ -19,22 +19,7 @@ app.use(bodyParser.json());
 app.use('/api/session', sessionRoutes);
 app.use('/api/abbrev', abbrevRoutes);
 
-// On startup: log available models for OpenAI accounts (if configured)
-(async () => {
-  try {
-    if (process.env.PROVIDER === 'openai' && process.env.OPENAI_API_KEY) {
-      const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-      const models = await client.models.list();
-      const ids = (models?.data || []).map(m => m.id);
-      console.log('[Startup] OpenAI models available to this key:', ids.length);
-      ids.forEach(id => console.log('  -', id));
-    } else {
-      console.log('[Startup] Model listing skipped (provider not openai or missing OPENAI_API_KEY).');
-    }
-  } catch (err) {
-    console.warn('[Startup] Failed to list OpenAI models:', err?.message || String(err));
-  }
-})();
+// Startup model listing removed per request
 
 // Compatibility endpoint for Angular webui when endpoint ends with :call
 app.post('/api:call', async (req, res) => {
