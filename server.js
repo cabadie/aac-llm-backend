@@ -21,10 +21,11 @@ app.use('/api/abbrev', abbrevRoutes);
 
 // Startup model listing removed per request
 
-// Compatibility endpoint for Angular webui when endpoint ends with :call
-app.post('/api:call', async (req, res) => {
+// Shared handler to support both "/api:call" and "/api/call" shapes
+async function handleApiCall(req, res) {
   try {
-    const parsed = typeof req.body?.json === 'string' ? JSON.parse(req.body.json) : req.body?.json || {};
+    const root = req.body || {};
+    const parsed = typeof root?.json === 'string' ? JSON.parse(root.json) : (root?.json || root || {});
     const mode = parsed.mode;
     if (mode === 'ping') {
       return res.json({ json: { ping_response: 'ok' } });
@@ -34,9 +35,9 @@ app.post('/api:call', async (req, res) => {
       return res.json({ json: { outputs: ['okay', 'sure', 'thank you'], contextualPhrases: [] } });
     }
     if (mode === 'abbreviation_expansion') {
-      const acronym = (parsed.acronym || '').toString().trim();
-      const speechContent = (parsed.speechContent || '').toString();
-      const precedingText = (parsed.precedingText || '').toString();
+      const acronym = (parsed.acronym || parsed.abbreviation || parsed.abbrev || '').toString().trim();
+      const speechContent = (parsed.speechContent || parsed.context || parsed.speech_content || '').toString();
+      const precedingText = (parsed.precedingText || parsed.prefixText || parsed.preceding_text || '').toString();
       let exactMatches = [];
       const provider = process.env.PROVIDER;
       const model = process.env.MODEL;
@@ -125,7 +126,7 @@ app.post('/api:call', async (req, res) => {
           exactMatches = [acronym.split('').join(' ')];
         }
       }
-       return res.json({ json: { exactMatches, modelUsed, source, llmError } });
+       return res.json({ json: { exactMatches, outputs: exactMatches, modelUsed, source, llmError, result: 'SUCCESS', contextualPhrases: [] } });
     }
     if (mode === 'retrieve_context') {
       return res.json({ json: { result: 'SUCCESS', contextSignals: [] } });
@@ -137,7 +138,12 @@ app.post('/api:call', async (req, res) => {
   } catch (e) {
     return res.status(500).json({ error: 'internal' });
   }
-});
+}
+
+// Compatibility endpoint for Angular webui when endpoint ends with :call
+app.post('/api:call', handleApiCall);
+// Mirror endpoint without colon for other clients
+app.post('/api/call', handleApiCall);
 
 const PORT = process.env.PORT || 8081;
 app.listen(PORT, () => {
