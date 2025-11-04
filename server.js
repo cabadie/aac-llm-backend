@@ -117,7 +117,7 @@ async function handleApiCall(req, res) {
     if (mode === 'next_word_prediction') {
       const precedingText = (parsed.precedingText || parsed.preceding_text || '').toString();
       const prefixText = (parsed.prefixText || parsed.prefix || '').toString();
-      const speechContent = (parsed.speechContent || parsed.context || parsed.speech_content || '').toString();
+      const speechContext = (parsed.speechContent || parsed.context || parsed.speech_content || '').toString();
       const speechHistory = (parsed.SpeechHistory || parsed.speechHistory || parsed.history || '').toString();
 
       const buildHeuristicPredictions = (prefix, history, context) => {
@@ -157,7 +157,7 @@ async function handleApiCall(req, res) {
           .sort((a, b) => b[1] - a[1])
           .slice(0, 10);
         const total = entries.reduce((sum, [, s]) => sum + s, 0) || 1;
-        const predictions = entries.map(([w, s]) => ({ word: w, probability: s / total }));
+        const predictions = entries.map(([w, s]) => ({ word: w, probability: Math.round((s / total) * 100) / 100 }));
         return predictions;
       };
 
@@ -175,19 +175,23 @@ async function handleApiCall(req, res) {
         };
         if (isLLMConfigured()) {
           const prompt = [
-            'You are a next-word prediction engine for an AAC typing assistant.',
-            'Given the current preceding text, the current prefix for the next word, prior speech history, and additional context,',
-            'return the top 10 next-word candidates that complete the next word yielding a phrase that is gramatically correct and ',
-            'semantically meaningful (must begin with the prefix if provided).',
-            'Respond with a strict JSON array of 10 objects, each with keys "word" (string) and "probability" (number in [0,1]).',
-            'Ensure the probabilities sum to 1.',
-            'Weight hevily on the speech history if present, since this should be a good predictor of what the user might be about to say. ',
-            'Do not include any text before or after the JSON.',
-            `precedingText: ${precedingText || ''}`,
-            `prefixText: ${prefixText || ''}`,
-            `speechHistory: ${speechHistory || ''}`,
-            `speechContent: ${speechContent || ''}`
-          ].join('\n');
+          'You are a next-word prediction engine for an AAC typing assistant. ',
+          'The user is mid way typing the phrase [precedingText]. ',
+          'Previously, the conversation contains: [speechHistory]. ',
+          'The context of the conversation is: [speechContext].',
+          'You\'re going to find words that start with the following sets of [prefixesText]. ',
+          'Return only the top 10 next-word candidates, as strict JSON array of objects ',
+          '{"word": string, "probability": number in [0,1]}. ',
+          'Ensure probabilities sum to 1. ',
+          'Do not include any text before or after the JSON. ',
+          'The words you\'ll return could be words that have those exact characters in [prefixesText] ',
+          'or more characters. In other words, the length of the words you return can be equal or longer ',
+          'to the [prefixesText] sets character lengths. ',
+          `[precedingText] ${precedingText || ''}`,
+          `[prefixesText] ${prefixText || ''}`,
+          `[speechHistory] ${speechHistory || ''}`,
+          `[speechContext] ${speechContext || ''}`
+          ].filter(Boolean).join('\n');
           const llmText = await callLLM({ prompt, messages: [] });
           const start = llmText.indexOf('[');
           const end = llmText.lastIndexOf(']');
@@ -200,7 +204,7 @@ async function handleApiCall(req, res) {
                 .slice(0, 10)
                 .map(x => ({ word: String(x.word).toLowerCase(), probability: Math.max(0, Math.min(1, Number(x.probability))) }));
               const sum = predictions.reduce((acc, p) => acc + p.probability, 0) || 1;
-              predictions = predictions.map(p => ({ word: p.word, probability: p.probability / sum }));
+              predictions = predictions.map(p => ({ word: p.word, probability: Math.round((p.probability / sum) * 100) / 100 }));
             }
           }
           if (predictions.length > 0) {
@@ -229,9 +233,10 @@ async function handleApiCall(req, res) {
       }
 
       if (predictions.length === 0) {
-        predictions = buildHeuristicPredictions(prefixText, speechHistory, speechContent);
+        predictions = buildHeuristicPredictions(prefixText, speechHistory, speechContext);
       }
-      return res.json({ json: { predictions, result: 'SUCCESS', modelUsed, source, llmError, contextualPhrases: [] } });
+      predictions = predictions.map(p => ({ word: p.word, probability: Math.round(p.probability * 100) / 100 }));
+      return res.json({ json: { predictions, result: 'SUCCESS', modelUsed, source, llmError } });
     }
     if (mode === 'ambig_next_word') {
       const precedingText = (parsed.precedingText || parsed.preceding_text || '').toString();
@@ -324,7 +329,7 @@ async function handleApiCall(req, res) {
           .sort((a, b) => b[1] - a[1])
           .slice(0, 10);
         const total = entries.reduce((sum, [, s]) => sum + s, 0) || 1;
-        return entries.map(([w, s]) => ({ word: w, probability: s / total }));
+        return entries.map(([w, s]) => ({ word: w, probability: Math.round((s / total) * 100) / 100 }));
       };
 
       let predictions = [];
@@ -388,7 +393,7 @@ async function handleApiCall(req, res) {
                 .slice(0, 10)
                 .map(x => ({ word: String(x.word).toLowerCase(), probability: Math.max(0, Math.min(1, Number(x.probability))) }));
               const sum = predictions.reduce((acc, p) => acc + p.probability, 0) || 1;
-              predictions = predictions.map(p => ({ word: p.word, probability: p.probability / sum }));
+              predictions = predictions.map(p => ({ word: p.word, probability: Math.round((p.probability / sum) * 100) / 100 }));
               // Apply ambiguity filter
               predictions = predictions.filter(p => candidateMatchesAmbiguous(p.word));
             }
@@ -419,7 +424,8 @@ async function handleApiCall(req, res) {
         predictions = buildHeuristicPredictions(speechHistory, speechContent);
       }
 
-      return res.json({ json: { predictions, result: 'SUCCESS', modelUsed, source, llmError, contextualPhrases: [] } });
+      predictions = predictions.map(p => ({ word: p.word, probability: Math.round(p.probability * 100) / 100 }));
+      return res.json({ json: { predictions, result: 'SUCCESS', modelUsed, source, llmError } });
     }
     if (mode === 'abbreviation_expansion') {
       const acronym = (parsed.acronym || parsed.abbreviation || parsed.abbrev || '').toString().trim();
@@ -513,7 +519,7 @@ async function handleApiCall(req, res) {
           exactMatches = [acronym.split('').join(' ')];
         }
       }
-       return res.json({ json: { exactMatches, outputs: exactMatches, modelUsed, source, llmError, result: 'SUCCESS', contextualPhrases: [] } });
+       return res.json({ json: { exactMatches, outputs: exactMatches, modelUsed, source, llmError, result: 'SUCCESS' } });
     }
     if (mode === 'retrieve_context') {
       return res.json({ json: { result: 'SUCCESS', contextSignals: [] } });
